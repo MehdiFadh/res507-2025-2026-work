@@ -10,3 +10,5 @@ During this lab, you will:
 - make your first Git commit
 
 If something goes wrong, you can safely delete the repository and clone it again.
+
+Mehdi
