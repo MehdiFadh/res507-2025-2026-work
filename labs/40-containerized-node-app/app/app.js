@@ -10,7 +10,7 @@ export async function buildApp() {
 
   // Register plugins
   await app.register(postgres, {
-    connectionString: process.env.DATABASE_URL ?? 'postgres://postgres@localhost/postgres'
+    connectionString: process.env.DATABASE_URL ?? 'postgres://postgres:postgres@localhost:5432/postgres'
   })
   await app.register(formbody);
   await app.register(view, {
@@ -45,10 +45,10 @@ export async function buildApp() {
     /******* TODO INSERT quote into DB ******/
     await app.pg.query('INSERT INTO quotes (author, text) VALUES ($1, $2)', [author || "anonymous", text]);
 
-    app.log.info({quote: { author: author || "anonymous", text }}, 'New quote added');
+    app.log.info({ quote: { author: author || "anonymous", text } }, 'New quote added');
 
     return reply.redirect("/");
   });
-  
+
   return app;
 };
