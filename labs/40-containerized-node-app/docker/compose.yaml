@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ../db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      PORT: 3630
+      HOST: 0.0.0.0
+      DATABASE_URL: postgres://postgres:postgres@db:5432/postgres
+      FORCE_COLOR: "1"
+    ports:
+      - "3630:3630"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
