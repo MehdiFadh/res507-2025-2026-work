@@ -8,6 +8,23 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # AJOUTE CE BLOC SERVICES 👇
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        # On attend que la DB soit prête avant de lancer les steps
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -23,11 +40,15 @@ jobs:
 
       - name: Run tests if present
         working-directory: labs/40-containerized-node-app/app
-        run: npm test --if-present
+        # On ajoute une variable d'env pour être sûr que l'app utilise bien ces identifiants
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: npm test
 
       - name: Build Docker image
         run: docker build -t quote-app -f labs/40-containerized-node-app/docker/Dockerfile labs/40-containerized-node-app
 
+      # ... Le reste de ton fichier ne change pas
       - name: Run container
         run: |
           docker run -d --name quote-app -p 3630:3630 quote-app
