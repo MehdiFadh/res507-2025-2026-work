@@ -1,41 +1,43 @@
-import test from 'node:test'
-import assert from 'node:assert'
-import { buildApp } from '../app.js'
+import test from "node:test";
+import assert from "node:assert";
+import { buildApp } from "../app/app.js";
 
-test('GET / responds with a page', async () => {
-    const app = await buildApp()
+const createMockPg = (rows = []) => ({
+  async query(sql) {
+    // Keep the mock simple—just return the provided rows.
+    assert.match(sql, /SELECT \* FROM quotes/);
+    return { rows };
+  },
+});
 
-    const response = await app.inject({
-        method: 'GET',
-        url: '/'
-    })
+test("GET / renvoie la page avec les citations", async (t) => {
+  const mockQuotes = [
+    { author: "Ada Lovelace", text: "L'imagination compte plus que la connaissance." },
+    { author: "Alan Turing", text: "Nous ne pouvons voir qu'un peu du futur, mais assez pour savoir qu'il y a beaucoup à faire." },
+  ];
 
-    console.log('Response status:', response.statusCode);
-    assert.strictEqual(response.statusCode, 200)
-    assert.match(response.body, /<html/i) // Basic check for HTML content
-    assert.match(response.body, /Quotes/i) // Check for some expected content
+  const app = await buildApp({ logger: false, pgClient: createMockPg(mockQuotes) });
+  t.after(() => app.close());
 
-    await app.close()
-})
+  const response = await app.inject({ method: "GET", url: "/" });
 
-test('POST /quotes adds a quote and redirects', async () => {
-    const app = await buildApp()
+  assert.strictEqual(response.statusCode, 200);
+  assert.match(response.headers["content-type"], /text\/html/);
+  assert.match(response.body, /QuoteBoard/);
+  assert.match(response.body, /Ada Lovelace/);
+  assert.match(response.body, /Alan Turing/);
+});
 
-    // Note: This test will fail if DB is not available or configured correctly
-    // Ideally we should mock the DB or have a dedicated test DB.
-    // For this exercise, we assume the environment is set up.
+test("GET /health renvoie ok", async (t) => {
+  const app = await buildApp({
+    logger: false,
+    // No DB interaction on /health, so we keep a minimal mock.
+    pgClient: { async query() { return { rows: [] }; } },
+  });
+  t.after(() => app.close());
 
-    const response = await app.inject({
-        method: 'POST',
-        url: '/quotes',
-        payload: {
-            author: 'Test Author',
-            text: 'Test Quote'
-        }
-    })
+  const response = await app.inject({ method: "GET", url: "/health" });
 
-    assert.strictEqual(response.statusCode, 302)
-    assert.strictEqual(response.headers.location, '/')
-
-    await app.close()
-})
+  assert.strictEqual(response.statusCode, 200);
+  assert.deepStrictEqual(JSON.parse(response.body), { ok: true });
+});

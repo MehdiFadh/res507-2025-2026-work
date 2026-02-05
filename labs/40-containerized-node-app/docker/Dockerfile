@@ -11,6 +11,6 @@ RUN npm ci
 COPY app/ ./
 
 ENV NODE_ENV=production
-EXPOSE 3000
+EXPOSE 3232
 
 CMD ["npm", "start"]

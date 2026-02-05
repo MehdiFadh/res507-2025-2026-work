@@ -8,6 +8,21 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -25,14 +40,31 @@ jobs:
         working-directory: labs/40-containerized-node-app/app
         run: npm test --if-present
 
+      - name: Initialize database
+        run: |
+          for i in $(seq 1 15); do
+            if docker run --rm --add-host=host.docker.internal:host-gateway \
+              -v "$GITHUB_WORKSPACE/labs/40-containerized-node-app/db/init.sql:/init.sql:ro" \
+              postgres:18 psql "postgres://postgres:postgres@host.docker.internal:5432/postgres" -f /init.sql 2>/dev/null; then
+              echo "Database initialized"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Failed to initialize database"
+          exit 1
+
       - name: Build Docker image
         run: docker build -t quote-app -f labs/40-containerized-node-app/docker/Dockerfile labs/40-containerized-node-app
 
       - name: Run container
         run: |
-          docker run -d --name quote-app -p 3630:3630 quote-app
+          docker run -d --name quote-app -p 3232:3232 \
+            --add-host=host.docker.internal:host-gateway \
+            -e DATABASE_URL=postgres://postgres:postgres@host.docker.internal:5432/postgres \
+            quote-app
           for i in $(seq 1 30); do
-            if curl -fsS http://localhost:3630/health >/dev/null; then
+            if curl -fsS http://localhost:3232/health >/dev/null; then
               echo "Health check passed"
               exit 0
             fi
@@ -40,9 +72,9 @@ jobs:
           done
           echo "Health check failed"
           docker logs quote-app || true
+          docker ps -a || true
           exit 1
 
       - name: Stop container
         if: always()
-        run: |
-          docker rm -f quote-app || true
+        run: docker rm -f quote-app || true
