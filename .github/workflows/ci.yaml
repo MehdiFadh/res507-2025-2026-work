@@ -26,7 +26,7 @@ jobs:
         run: npm test --if-present || true
 
       - name: Build Docker image
-        run: docker build -t quote-app -f labs/40-containerized-node-app/docker/Dockerfile labs/40-containerized-node-app/app
+        run: docker build -t quote-app -f labs/40-containerized-node-app/docker/Dockerfile labs/40-containerized-node-app
 
       - name: Run container
         run: |
