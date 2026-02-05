@@ -30,9 +30,9 @@ jobs:
 
       - name: Run container
         run: |
-          docker run -d --name quote-app -p 3000:3000 quote-app
+          docker run -d --name quote-app -p 3630:3630 quote-app
           for i in $(seq 1 30); do
-            if curl -fsS http://localhost:3000/health >/dev/null; then
+            if curl -fsS http://localhost:3630/health >/dev/null; then
               echo "Health check passed"
               exit 0
             fi
