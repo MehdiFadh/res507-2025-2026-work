@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert'
 import { buildApp } from '../app.js'
 
+
+// Vérifie que la page d'accueil ce lance correctement
 test('GET / responds with a page', async () => {
     const app = await buildApp()
 
@@ -18,6 +20,7 @@ test('GET / responds with a page', async () => {
     await app.close()
 })
 
+// Vérifie que l'ajout d'une quote fonctionnement et rédige correctement
 test('POST /quotes adds a quote and redirects', async () => {
     const app = await buildApp()
 
