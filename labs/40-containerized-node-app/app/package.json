@@ -7,7 +7,7 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "test": "node --test app/tests/",
+    "test": "node --test labs/40-containerized-node-app/app/tests/",
     "dev": "nodemon --ext js,hbs server.js | pino-pretty",
     "start": "node server.js | pino-pretty"
   },
