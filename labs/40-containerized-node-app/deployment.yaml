@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: quote-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: quote-app
+  template:
+    metadata:
+      labels:
+        app: quote-app
+    spec:
+      containers:
+        - name: quote-app
+          image: quote-app:local
+          env:
+            - name: DATABASE_URL
+              value: postgres://postgres:postgres@db:5432/postgres
+          ports:
+            - containerPort: 3232
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3232
+            initialDelaySeconds: 3
+            periodSeconds: 5
