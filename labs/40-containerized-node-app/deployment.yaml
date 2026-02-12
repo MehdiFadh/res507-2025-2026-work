@@ -19,10 +19,10 @@ spec:
             - name: DATABASE_URL
               value: postgres://postgres:postgres@db:5432/postgres
           ports:
-            - containerPort: 3232
+            - containerPort: 3535
           readinessProbe:
             httpGet:
               path: /health
-              port: 3232
+              port: 3535
             initialDelaySeconds: 3
             periodSeconds: 5
