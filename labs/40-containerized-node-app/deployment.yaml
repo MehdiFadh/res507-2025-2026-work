@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: quote-app
-          image: quote-app:local
+          image: quote-app:bad-image-tag-for-testing
           env:
             - name: DATABASE_URL
               value: postgres://postgres:postgres@db:5432/postgres
