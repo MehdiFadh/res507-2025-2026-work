@@ -20,9 +20,22 @@ spec:
               value: postgres://postgres:postgres@db:5432/postgres
           ports:
             - containerPort: 3232
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
           readinessProbe:
             httpGet:
-              path: /health
+              path: /
               port: 3232
-            initialDelaySeconds: 3
+            initialDelaySeconds: 5
             periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3232
+            initialDelaySeconds: 5
+            periodSeconds: 10
