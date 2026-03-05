@@ -258,3 +258,138 @@ Dans cette architecture de production professionnelle, voici où tourne chaque c
 * **Le Registre d'Images (Docker Registry) :** Le stockage et le scan de sécurité des images (ex: Harbor, AWS ECR, Docker Hub) ne tourne souvent pas dans le cluster lui-même pour des questions de disponibilité et d'auditabilité.
 * **L'entrepôt des sauvegardes :** Le stockage S3 (ou équivalent) où sont envoyés les Dumps de la base de données et les logs archivés.
 * **La chaîne CI/CD :** Les serveurs qui exécutent le pipeline DevOps (GitHub Actions, GitLab runners...) et le dépôt de code (Git).
+
+---
+
+## Panne Contrôlée et Récupération (Required Break and Analysis)
+
+Pour démontrer le comportement de Kubernetes face à une erreur de configuration, nous avons volontairement introduit une panne contrôlée puis observé et corrigé le problème.
+
+### 1. Introduction de la panne : Image invalide
+
+Nous avons modifié le champ `image` dans `deployment.yaml` pour pointer vers un tag d'image inexistant :
+
+```diff
+ containers:
+   - name: quote-app
+-    image: quote-app:local
++    image: quote-app:bad-image-tag-for-testing
+```
+
+Puis nous avons appliqué ce changement :
+
+```bash
+$ kubectl apply -f deployment.yaml
+deployment.apps/quote-app configured
+```
+
+Kubernetes a accepté la configuration (elle est syntaxiquement valide), mais le conteneur ne pourra jamais démarrer car l'image n'existe nulle part.
+
+### 2. Observation de la panne
+
+#### `kubectl get pods`
+
+```
+NAME                         READY   STATUS             RESTARTS        AGE
+quote-app-67f94f5f78-tsv9m   1/1     Running            1 (2d20h ago)   2d20h
+quote-app-67fff8c464-nlsnp   0/1     ImagePullBackOff   0               2d20h
+```
+
+**Analyse :**
+* L'ancien Pod (`-tsv9m`) avec l'image correcte `quote-app:local` continue de tourner normalement (`Running`, `1/1 READY`). Kubernetes utilise un **Rolling Update** : il ne détruit l'ancien Pod que lorsque le nouveau est prêt. Comme le nouveau ne démarre jamais, l'ancien reste en ligne — c'est une protection contre les déploiements défaillants.
+* Le nouveau Pod (`-nlsnp`) est bloqué en **`ImagePullBackOff`** avec `0/1 READY`. Il n'a jamais pu démarrer.
+
+#### `kubectl describe pod quote-app-67fff8c464-nlsnp`
+
+```
+Name:             quote-app-67fff8c464-nlsnp
+Status:           Pending
+IP:               10.42.0.157
+Controlled By:    ReplicaSet/quote-app-67fff8c464
+
+Containers:
+  quote-app:
+    Image:          quote-app:bad-image-tag-for-testing
+    State:          Waiting
+      Reason:       ImagePullBackOff
+    Ready:          False
+    Restart Count:  0
+
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True
+  Initialized                 True
+  Ready                       False
+  ContainersReady             False
+  PodScheduled                True
+
+Events:
+  Type     Reason   Age    From     Message
+  ----     ------   ----   ----     -------
+  Normal   Pulling  7m     kubelet  Pulling image "quote-app:bad-image-tag-for-testing"
+  Warning  Failed   7m     kubelet  Failed to pull image "quote-app:bad-image-tag-for-testing":
+                                    failed to resolve reference "docker.io/library/quote-app:bad-image-tag-for-testing":
+                                    pull access denied, repository does not exist or may require authorization
+  Warning  Failed   7m     kubelet  Error: ErrImagePull
+  Warning  Failed   2m     kubelet  Error: ImagePullBackOff
+  Normal   BackOff  2m     kubelet  Back-off pulling image "quote-app:bad-image-tag-for-testing"
+```
+
+**Analyse :**
+* Le Pod est en état **`Pending`** — il a été planifié sur le nœud (`PodScheduled: True`) mais ne peut pas démarrer.
+* Le cycle d'erreur est : `ErrImagePull` → `ImagePullBackOff`. Kubernetes tente de télécharger l'image, échoue, puis attend un délai exponentiel croissant (*back-off*) avant de réessayer.
+* Le message d'erreur précise que le dépôt Docker Hub `docker.io/library/quote-app:bad-image-tag-for-testing` n'existe pas ou nécessite une autorisation.
+
+#### `kubectl get events`
+
+```
+4m7s   Normal   Pulling   pod/quote-app-67fff8c464-nlsnp   Pulling image "quote-app:bad-image-tag-for-testing"
+4m6s   Warning  Failed    pod/quote-app-67fff8c464-nlsnp   Failed to pull image "quote-app:bad-image-tag-for-testing":
+                                                            failed to resolve reference "docker.io/library/quote-app:bad-image-tag-for-testing":
+                                                            pull access denied, repository does not exist or may require authorization
+4m6s   Warning  Failed    pod/quote-app-67fff8c464-nlsnp   Error: ErrImagePull
+2m3s   Warning  Failed    pod/quote-app-67fff8c464-nlsnp   Error: ImagePullBackOff
+108s   Normal   BackOff   pod/quote-app-67fff8c464-nlsnp   Back-off pulling image "quote-app:bad-image-tag-for-testing"
+```
+
+**Analyse :**
+Les *Events* Kubernetes montrent clairement la chronologie de l'échec :
+1. **`Pulling`** — Kubernetes tente de télécharger l'image.
+2. **`Failed` (ErrImagePull)** — Le téléchargement échoue immédiatement car l'image n'existe pas.
+3. **`Failed` (ImagePullBackOff)** — Kubernetes entre en mode *back-off* : il augmente le délai entre chaque tentative (30s, 1min, 2min, 5min max) pour ne pas surcharger le registre Docker.
+
+### 3. Correction de la panne
+
+Pour corriger, nous avons restauré le nom d'image correct dans `deployment.yaml` :
+
+```diff
+ containers:
+   - name: quote-app
+-    image: quote-app:bad-image-tag-for-testing
++    image: quote-app:local
+```
+
+Puis ré-appliqué :
+
+```bash
+$ kubectl apply -f deployment.yaml
+deployment.apps/quote-app configured
+```
+
+#### Vérification après correction : `kubectl get pods`
+
+```
+NAME                         READY   STATUS    RESTARTS        AGE
+quote-app-67f94f5f78-tsv9m   1/1     Running   1 (2d20h ago)   2d20h
+```
+
+Le Pod défaillant (`-nlsnp`) a été automatiquement supprimé par le ReplicaSet, et l'ancien Pod fonctionnel (`-tsv9m`) reprend son rôle. L'application est de nouveau opérationnelle.
+
+### 4. Résumé : Ce que cet exercice démontre
+
+| Concept | Démonstration |
+| :--- | :--- |
+| **Rolling Update** | Kubernetes ne tue pas l'ancien Pod tant que le nouveau n'est pas prêt. L'application reste disponible même pendant un déploiement défaillant. |
+| **ImagePullBackOff** | Quand une image est introuvable, Kubernetes réessaie avec un délai exponentiel croissant (*exponential back-off*) au lieu de boucler indéfiniment. |
+| **Self-Healing** | Dès que la configuration correcte est restaurée, Kubernetes converge automatiquement vers l'état désiré sans intervention manuelle supplémentaire. |
+| **Observabilité** | Les commandes `kubectl describe pod` et `kubectl get events` fournissent toutes les informations nécessaires pour diagnostiquer rapidement la cause d'une panne. |
