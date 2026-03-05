@@ -652,3 +652,40 @@ Après avoir exécuté la commande d'annulation `kubectl rollout undo deployment
 * **Les Pods fonctionnels déjà en cours d'exécution :** L'ancien Pod qui était toujours en état `Running` (car le *RollingUpdate* n'avait pas réussi à déployer le nouveau) **n'a jamais été interrompu**. Le rollback s'est contenté d'abandonner l'essai de mise à jour. L'application est restée 100% disponible pour les utilisateurs du début à la fin de l'incident.
 * **Le Service et la Base de Données :** Le `Service` Kubernetes et le point de terminaison du Service n'ont subi aucun changement, et la base de données PostgreSQL a continué à fonctionner normalement.
 * **L'état désiré global :** Le nombre de réplicas désiré est resté le même (`replicas: 1`), seul le modèle d'image a fait un retour en arrière.
+
+## Stratégie de Déploiement Explicite (Explicit Rollout Strategy)
+
+Dans la ressource `Deployment`, nous avons défini explicitement la stratégie de mise à jour suivante :
+
+```yaml
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+```
+
+### 1. What does maxSurge do? (Que fait maxSurge ?)
+**`maxSurge` (Surplus maximal)** définit le nombre *maximum de Pods supplémentaires* (au-dessus du nombre désiré `replicas`) qui peuvent être créés pendant la mise à jour. 
+* Dans notre cas (`maxSurge: 1` pour `replicas: 1`), pendant un déploiement, Kubernetes est autorisé à lancer un 2ème Pod temporaire. Il y aura donc brièvement **2 Pods** tournant en même temps jusqu'à ce que la mise à jour se termine.
+* Cela permet de démarrer la nouvelle version de l'application *avant* même de commencer à éteindre l'ancienne.
+
+### 2. What does maxUnavailable do? (Que fait maxUnavailable ?)
+**`maxUnavailable` (Indisponibilité maximale)** définit le nombre *maximum de Pods qui peuvent être indisponibles* (en dessous du nombre désiré `replicas`) pendant le processus de mise à jour.
+* Dans notre cas (`maxUnavailable: 0` pour `replicas: 1`), Kubernetes a l'interdiction stricte de supprimer l'ancien Pod s'il n'y a pas déjà au moins un nouveau Pod fonctionnel et *Ready* pour prendre le relais.
+* Cela garantit que la capacité de traitement ne descendra **jamais** en dessous de la capacité nominale spécifiée (100%).
+
+### 3. Why might you choose 0 for maxUnavailable? (Pourquoi choisir 0 pour maxUnavailable ?)
+On choisit `maxUnavailable: 0` principalement pour garantir le **Zéro Temps d'Arrêt (*Zero Downtime*)** et préserver la capacité totale de l'application pendant les déploiements :
+* **Maintien de la performance :** Si une application nécessite impérativement `10` Pods pour gérer son trafic normal et que l'on met `maxUnavailable: 2`, l'application tournera à 8 Pods pendant le déploiement, ce qui pourrait causer une surcharge de trafic (CPU throttling, requests en timeout). Avec `0`, la capacité ne descendra jamais en dessous de 10.
+* **Déploiement avec 1 seul Replica :** Dans notre projet, nous n'avons que `replicas: 1`. Si nous configurions `maxUnavailable: 1` (qui équivaut à 100% d'indisponibilité autorisée), Kubernetes supprimerait notre unique Pod *avant* même que le nouveau soit prêt, provoquant une coupure totale de service de plusieurs secondes (le temps que le conteneur Node.js télécharge l'image et démarre). En forçant `maxUnavailable: 0`, nous empêchons explicitement toute interruption de l'application web.
+
+## Tests de Bout-en-Bout (End-to-End Checks)
+
+Dans un environnement de production réel, l'application métier ne se limite pas à valider que les Pods démarrent. Des tests End-to-End (E2E), par exemple avec un outil comme *Playwright* ou *Cypress*, seraient mis en œuvre.
+
+* **Ce qu'un test E2E validerait pour cette application :** Un script automatisé lancerait un vrai navigateur (Chromium, Firefox) pour naviguer sur l'application `QuoteBoard`, vérifierait que la page se charge correctement (pas de page blanche), que le titre attendu ("QuoteBoard v2") est bien affiché, et qu'il est possible de soumettre et de voir une nouvelle citation dans l'interface (ce qui valide implicitement que toute la chaîne Client → Ingress → Service → Pod Node.js → Base de Données fonctionne dans son ensemble).
+* **Où ces tests doivent-ils s'exécuter :** Idéalement **aux deux endroits**. 
+    * **Localement** par le développeur avant de pousser son code pour s'assurer qu'il n'a rien cassé.
+    * **Dans la CI/CD** (ex: GitHub Actions) de manière systématique et bloquante à chaque *Pull Request*, et après chaque déploiement sur l'environnement de *Staging* pour certifier la *release* avant le déploiement en *Production*.
+* **Le plus grand coût ou risque :** Le principal inconvénient des tests E2E est leur **coût de maintenance (fragilité / "Flakiness")** et leur **lenteur**. Contrairement aux tests unitaires qui s'exécutent en millisecondes, un test E2E de navigateur prend des secondes. De plus, le moindre changement anodin sur l'interface graphique (renommer un bouton, changer un ID CSS) peut faire échouer le test à tort, demandant aux développeurs un temps de mise à jour et d'investigation constant.
