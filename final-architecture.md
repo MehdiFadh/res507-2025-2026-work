@@ -1,5 +1,42 @@
 # Current System Problems
 
+Voici à quoi ressemble l'architecture problématique actuelle :
+
+```mermaid
+graph TD
+    classDef k8s fill:#f44336,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef storage fill:#ff9900,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef user fill:#4caf50,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef danger fill:#d32f2f,stroke:#fff,stroke-width:2px,color:#fff;
+
+    U((Utilisateurs)):::user
+
+    subgraph Cluster["Cluster Kubernetes"]
+        I[Ingress / NodePort]:::k8s
+        
+        Svc[[Service:\nquote-api]]:::k8s
+        
+        subgraph Node["Unique Nœud Worker"]
+            subgraph Pod["Pod Unique: quote-api"]
+                App(Container: API Quote):::k8s
+                DB(Container: PostgreSQL):::k8s
+                EnvVars>Variables d'Env:\nDB_PASSWORD=en_clair]:::danger
+            end
+        end
+    end
+
+    U -->|"Requêtes HTTP"| I
+    I -->|"Routage"| Svc
+    Svc -->|"Trafic vers le seul Pod"| App
+    
+    EnvVars -.->|"Injecté en clair"| App
+    EnvVars -.->|"Injecté en clair"| DB
+    
+    App -->|"Connexion interne\n(localhost:5432)"| DB
+    
+    DB -.->|"Données éphémères\n(Perdues au redémarrage)"| DB
+```
+
 ## 1. Base de données et application dans le même conteneur (Anti-pattern)
 * **Quel est le problème ?**
 L'API Quote et la base de données PostgreSQL s'exécutent au sein du même conteneur ou du même Pod.
