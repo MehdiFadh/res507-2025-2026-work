@@ -226,6 +226,51 @@ Pour résumer le chemin parcouru, voici comment la nouvelle architecture résout
 
 ---
 
+# Pour aller plus loin : Axe d'amélioration (Sécurité Réseau)
+
+Même avec cette architecture robuste, il reste un point de sécurité majeur à configurer dans un environnement de production critique : **Le cloisonnement réseau.**
+
+## 1️⃣ Ajouter une couche de sécurité réseau (NetworkPolicy)
+
+Actuellement, dans un cluster Kubernetes natif, **tous les pods peuvent parler à tous les pods par défaut** (modèle "Default Allow").
+Cela signifie que si un attaquant réussit à compromettre un autre conteneur complètement inoffensif sur le même cluster, ce conteneur malveillant aura l'autorisation réseau interne d'essayer de se connecter à notre nœud `PostgreSQL` sur le port 5432.
+
+👉 **Solution : Ajouter des `NetworkPolicy` pour limiter les communications (Modèle "Zero Trust").**
+
+### Exemple de règles d'autorisation (Firewall Kubernetes) :
+* L'API `quote-api` demande à parler à `postgres:5432` ✅ **Autorisé**
+* La base de données `postgres` tente d'initier une requête sortante vers l'API ❌ **Bloqué**
+* N'importe quel autre pod du cluster tente de parler à `postgres` ❌ **Bloqué**
+
+### Architecture (Logique YAML) :
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-postgres
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres # La règle s'applique à la base de données
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: quote-api # Seul ce label est autorisé en entrée
+      ports:
+        - protocol: TCP
+          port: 5432
+```
+
+### Bénéfices :
+- **Limite les mouvements latéraux :** Si un composant est piraté, l'attaquant est confiné à l'espace réseau minime de ce Pod et ne peut pas scanner ou attaquer le reste de l'infrastructure.
+- **Réduit drastiquement l'impact d'un pod compromis :** Il protège la base de données de toute entité non autorisée par design.
+- **Bonne pratique de sécurité Kubernetes :** C'est un standard exigé par toutes les certifications de sécurité Cloud (ex: SOC2, ISO27001).
+
+---
+
 ## Réflexion optionnelle (Architecture avancée)
 
 ### 1. Qu'est-ce qui céderait en premier en cas de trafic multiplié par 10 ?
