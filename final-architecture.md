@@ -142,3 +142,35 @@ En cas de panne matérielle d'un nœud ou de la suppression accidentelle d'un co
 3. **Endpoint Controller :** Met à jour dynamiquement la liste des adresses IP des Pods actifs et "Prêts" rattachés aux différents `Services`, assurant ainsi que le routage du trafic ignore toujours les Pods défaillants.
 
 # Weakest Point
+
+## Quel est le point faible de votre architecture et pourquoi ?
+Malgré les nombreuses améliorations apportées pour garantir la haute disponibilité de l'application (l'API Quote), **le point faible majeur de cette architecture reste la base de données PostgreSQL.**
+
+Actuellement, bien que les données soient sauvegardées de manière persistante (grâce au `PersistentVolumeClaim`), il n'y a **qu'une seule instance (Pod) de PostgreSQL** qui fonctionne à la fois.
+1. **Goulet d'étranglement des performances (Bottleneck) :** Si le trafic utilisateur explose, l'API Quote pourra automatiquement évoluer (Scale Out) grâce au HPA et ajouter de nombreux réplicas. Cependant, toutes ces instances de l'API viendront "taper" sur la même et unique base de données. Arrivée à une certaine limite opérationnelle (CPU, RAM, connexions simultanées, ou I/O disque), la base de données ne pourra plus répondre aux requêtes, rendant l'API très lente puis inutilisable.
+2. **Temps d'Indisponibilité (Downtime) lors d'une panne du Nœud :** Si le nœud physique hébergeant le Pod PostgreSQL tombe en panne, le contrôleur `StatefulSet` recréera bien le Pod sur un autre nœud. Cependant, le temps que le crash soit détecté, qu'un nouveau nœud s'alloue le volume persistant, que l'image du conteneur démarre et que le moteur de base de données s'initialise, l'application sera **totalement incapable de servir ou d'enregistrer des données pendant plusieurs minutes**.
+
+## Comment y remédier à terme ?
+Pour véritablement rendre ce système résilient à de très fortes contraintes et à des pannes sectorielles, il faudrait mettre en place un **Cluster de bases de données (ex: PostgreSQL Haute Disponibilité)** avec :
+* **Une topologie Primary-Replica (Leader/Follower) :** Un nœud Master gère les écritures, et plusieurs nœuds Replicas gèrent les lectures (ce qui répartit la charge).
+* **Failover automatique :** En cas de perte du nœud Master, l'un des nœuds Replica prend instantanément sa place sans intervention humaine et de façon presque transparente pour l'API. (Des solutions comme *CrunchyData PGO*, *Zalando Postgres Operator*, ou un service managé cloud comme *AWS RDS Multi-AZ* permettent de gérer cette complexité).
+
+
+---
+
+## Réflexion optionnelle (Architecture avancée)
+
+### 1. Qu'est-ce qui céderait en premier en cas de trafic multiplié par 10 ?
+La base de données PostgreSQL. L'application (Deployment K8s) avec un HPA va rajouter des Pods (scale out) pour absorber les requêtes HTTP, mais tous ces Pods vont ouvrir de nouvelles connexions simultanées vers l'unique Pod de la base de données. PostgreSQL va s'effondrer sous le nombre de connexions (erreur *too many clients already*), épuiser son CPU ou saturer les entrées/sorties de son disque (IOPS), paralysant ainsi toute l'application.
+
+### 2. Quels signaux de surveillance surveilleriez-vous en premier ?
+- **Au niveau applicatif (Node.js) :** Le taux d'erreurs (Erreurs HTTP 5xx/4xx) et la latence moyenne (temps de réponse) des requêtes HTTP.
+- **Au niveau de la base de données :** Le nombre de connexions actives, l'utilisation CPU/RAM du conteneur DB, et les performances IOPS du disque persistant.
+- **Au niveau de l'infrastructure K8s :** L'utilisation du CPU et de la mémoire globale des nœuds, pour s'assurer que de nouveaux Pods réplicas ne vont pas échouer avec l'état `Pending` faute de ressources, et les métriques des HPA.
+
+### 3. Comment déploieriez-vous ce système sur plusieurs nœuds ou régions ?
+- **Sur plusieurs nœuds (Résilience locale) :** Configurer le Deployment de l'API avec des règles de `podAntiAffinity` pour forcer K8s à toujours planifier les différents réplicas de l'application sur des nœuds physiques distincts.
+- **Sur plusieurs régions (Haute dispo globale) :** Utiliser un cluster de base de données multi-régions (comme CockroachDB ou AWS Aurora Global Database qui gèrent la réplication de données entre continents), et mettre en place un équilibreur de charge au niveau réseau global (ex: AWS Route53 ou Cloudflare) qui route d'abord la requête vers le cluster Kubernetes de la région géographiquement la plus proche de l'utilisateur.
+
+### 4. Quelle partie de ce système pourrait nécessiter des machines virtuelles plutôt que des conteneurs ?
+**La base de données PostgreSQL de production.** Bien que K8s sache très bien gérer des BDD (via les StatefulSets / opérateurs), extraire la base de données hors du cluster pour la faire tourner sur des Machines Virtuelles dédiées (Bare-metal ou instances cloud optimisées mémoire/disque) est une pratique de production mature. Cela permet d'isoler drastiquement ses performances matérielles (élimination du risque de voisins bruyants ou "Noisy Neighbors" accaparant le disque sur les nœuds K8s), de stabiliser la latence I/O, et de simplifier fortement l'administration des snapshots, des back-ups système et du failover OS.
