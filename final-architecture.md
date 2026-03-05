@@ -94,25 +94,25 @@ graph TD
     
     PV[(PersistentVolume\nStockage Externe)]:::storage
 
-    U -->|Requêtes HTTP| I
-    I -->|Routage interne| SvcApp
+    U -->|"Requêtes HTTP"| I
+    I -->|"Routage interne"| SvcApp
     
-    SvcApp -->|Load Balancing| App1
-    SvcApp -->|Load Balancing| App2
-    SvcApp -->|Load Balancing| App3
+    SvcApp -->|"Load Balancing"| App1
+    SvcApp -->|"Load Balancing"| App2
+    SvcApp -->|"Load Balancing"| App3
     
-    Secret -.->|Injections (Env Vars)| App1
-    Secret -.->|Injections (Env Vars)| App2
-    Secret -.->|Injections (Env Vars)| App3
-    Secret -.->|Mots de passe| DB
+    Secret -.->|"Injections (Env Vars)"| App1
+    Secret -.->|"Injections (Env Vars)"| App2
+    Secret -.->|"Injections (Env Vars)"| App3
+    Secret -.->|"Mots de passe"| DB
 
-    App1 -->|Connexion (TCP 5432)| SvcDB
-    App2 -->|Connexion (TCP 5432)| SvcDB
-    App3 -->|Connexion (TCP 5432)| SvcDB
+    App1 -->|"Connexion (TCP 5432)"| SvcDB
+    App2 -->|"Connexion (TCP 5432)"| SvcDB
+    App3 -->|"Connexion (TCP 5432)"| SvcDB
     
-    SvcDB -->|Trafic DB| DB
+    SvcDB -->|"Trafic DB"| DB
     
-    DB -->|Monte le stockage| PVC
+    DB -->|"Monte le stockage"| PVC
     PVC --- PV
 ```
 
