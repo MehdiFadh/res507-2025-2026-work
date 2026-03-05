@@ -17,9 +17,15 @@ spec:
           image: postgres:18
           env:
             - name: POSTGRES_USER
-              value: postgres
+              valueFrom:
+                secretKeyRef:
+                  name: quote-db-secret
+                  key: POSTGRES_USER
             - name: POSTGRES_PASSWORD
-              value: postgres
+              valueFrom:
+                secretKeyRef:
+                  name: quote-db-secret
+                  key: POSTGRES_PASSWORD
             - name: POSTGRES_DB
               value: postgres
           ports:

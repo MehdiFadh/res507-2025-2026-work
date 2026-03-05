@@ -16,8 +16,18 @@ spec:
         - name: quote-app
           image: quote-app:local
           env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: quote-db-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: quote-db-secret
+                  key: POSTGRES_PASSWORD
             - name: DATABASE_URL
-              value: postgres://postgres:postgres@db:5432/postgres
+              value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@db:5432/postgres
           ports:
             - containerPort: 3232
           resources:

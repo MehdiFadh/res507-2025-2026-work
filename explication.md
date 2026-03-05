@@ -393,3 +393,117 @@ Le Pod défaillant (`-nlsnp`) a été automatiquement supprimé par le ReplicaSe
 | **ImagePullBackOff** | Quand une image est introuvable, Kubernetes réessaie avec un délai exponentiel croissant (*exponential back-off*) au lieu de boucler indéfiniment. |
 | **Self-Healing** | Dès que la configuration correcte est restaurée, Kubernetes converge automatiquement vers l'état désiré sans intervention manuelle supplémentaire. |
 | **Observabilité** | Les commandes `kubectl describe pod` et `kubectl get events` fournissent toutes les informations nécessaires pour diagnostiquer rapidement la cause d'une panne. |
+
+---
+
+## Configuration par Secret (Secret-Based Configuration)
+
+### 1. Création du Secret Kubernetes
+
+Les identifiants de la base de données, auparavant en clair dans les manifestes YAML, ont été externalisés dans un objet **Secret** Kubernetes :
+
+```bash
+$ kubectl create secret generic quote-db-secret \
+  --from-literal=POSTGRES_USER=postgres \
+  --from-literal=POSTGRES_PASSWORD=postgres
+secret/quote-db-secret created
+```
+
+Le Secret est stocké dans le cluster sous forme encodée en **Base64** :
+
+```yaml
+# kubectl get secret quote-db-secret -o yaml
+apiVersion: v1
+kind: Secret
+type: Opaque
+metadata:
+  name: quote-db-secret
+data:
+  POSTGRES_USER: cG9zdGdyZXM=       # "postgres" en Base64
+  POSTGRES_PASSWORD: cG9zdGdyZXM=   # "postgres" en Base64
+```
+
+### 2. Modification des Deployments
+
+#### `db-deployment.yaml` (PostgreSQL)
+
+Les variables d'environnement `POSTGRES_USER` et `POSTGRES_PASSWORD` ne sont plus en valeurs brutes — elles sont injectées depuis le Secret :
+
+```diff
+  env:
+    - name: POSTGRES_USER
+-     value: postgres
++     valueFrom:
++       secretKeyRef:
++         name: quote-db-secret
++         key: POSTGRES_USER
+    - name: POSTGRES_PASSWORD
+-     value: postgres
++     valueFrom:
++       secretKeyRef:
++         name: quote-db-secret
++         key: POSTGRES_PASSWORD
+    - name: POSTGRES_DB
+      value: postgres
+```
+
+#### `deployment.yaml` (Application Node.js)
+
+Le `DATABASE_URL` est désormais construit dynamiquement à partir des variables du Secret grâce à l'interpolation `$(...)` de Kubernetes :
+
+```diff
+  env:
++   - name: POSTGRES_USER
++     valueFrom:
++       secretKeyRef:
++         name: quote-db-secret
++         key: POSTGRES_USER
++   - name: POSTGRES_PASSWORD
++     valueFrom:
++       secretKeyRef:
++         name: quote-db-secret
++         key: POSTGRES_PASSWORD
+    - name: DATABASE_URL
+-     value: postgres://postgres:postgres@db:5432/postgres
++     value: postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@db:5432/postgres
+```
+
+### 3. Vérification
+
+Après application des changements (`kubectl apply`), les deux Pods redémarrent et fonctionnent normalement :
+
+```
+$ kubectl get pods
+NAME                         READY   STATUS    RESTARTS   AGE
+db-55d5976455-llkv7          1/1     Running   0          51s
+quote-app-787cf876d8-mckrs   1/1     Running   0          51s
+```
+
+L'application est opérationnelle : les identifiants sont correctement injectés depuis le Secret dans les conteneurs.
+
+### 4. Réponses aux questions
+
+#### Pourquoi est-ce mieux qu'une configuration en texte brut ? (Why is this better than plain-text configuration?)
+
+Stocker les identifiants dans un Secret plutôt qu'en clair dans le YAML est préférable pour plusieurs raisons :
+
+* **Séparation des responsabilités :** Les identifiants vivent dans un objet dédié (`Secret`), pas dans le manifeste de déploiement. On peut modifier le mot de passe *sans* toucher ni redéployer les fichiers de déploiement.
+* **Contrôle d'accès granulaire (RBAC) :** Kubernetes permet de configurer des règles RBAC spécifiques aux Secrets. On peut autoriser les développeurs à lire les Deployments tout en leur interdisant l'accès aux Secrets — impossible si les mots de passe sont en clair dans le même fichier YAML.
+* **Sécurité du dépôt Git :** Le fichier `deployment.yaml` peut être versionné dans Git sans exposer de mot de passe. Le Secret est créé via `kubectl` ou un outil de gestion de secrets (Vault, Sealed Secrets), jamais commité en clair.
+* **Rotation simplifiée :** Pour changer un mot de passe, il suffit de mettre à jour le Secret et de redémarrer les Pods. Pas besoin de modifier chaque manifeste qui référence ces identifiants.
+* **Réutilisation :** Plusieurs Deployments différents peuvent référencer le même Secret (`quote-db-secret`), garantissant la cohérence des identifiants à travers tout le cluster.
+
+#### Un Secret est-il chiffré par défaut ? Où ? (Is a Secret encrypted by default? Where?)
+
+**Non, un Secret Kubernetes n'est PAS chiffré par défaut.** Il est seulement **encodé en Base64**, ce qui n'est *pas* du chiffrement — c'est un simple encodage réversible par n'importe qui (`echo cG9zdGdyZXM= | base64 -d` → `postgres`).
+
+Voici où et comment le Secret est stocké et protégé :
+
+| Couche | État par défaut | Recommandation en production |
+| :--- | :--- | :--- |
+| **Stockage etcd** | Le Secret est stocké **en clair** (Base64) dans la base etcd du cluster. | Activer le **chiffrement au repos** (*Encryption at Rest*) via un `EncryptionConfiguration` dans l'API Server, utilisant AES-CBC ou AES-GCM. |
+| **API Kubernetes** | Accessible via `kubectl get secret -o yaml` à toute personne ayant les droits RBAC adéquats. | Restreindre l'accès par des **politiques RBAC strictes** sur les ressources `secrets`. |
+| **Dans le Pod** | Les valeurs sont injectées en clair en tant que variables d'environnement ou fichiers montés. | Utiliser des outils externes comme **HashiCorp Vault**, **AWS Secrets Manager**, ou **Sealed Secrets** (Bitnami) pour un vrai chiffrement de bout en bout. |
+| **En transit** | Les communications API Server ↔ etcd utilisent TLS. | S'assurer que le TLS est bien actif (c'est le cas par défaut avec k3s). |
+
+> **En résumé :** Les Secrets Kubernetes offrent une meilleure *gestion* des données sensibles (séparation, RBAC, rotation), mais pas de vrai *chiffrement* sans configuration supplémentaire. Pour une sécurité de niveau production, il faut activer le chiffrement au repos d'etcd et/ou utiliser un gestionnaire de secrets externe.
