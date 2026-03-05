@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: quote-app
-          image: quote-app:local
+          image: quote-app:v2
           env:
             - name: POSTGRES_USER
               valueFrom:
