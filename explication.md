@@ -618,3 +618,22 @@ L'ordre des événements est régi par la stratégie **RollingUpdate** par défa
 1. **Création d'abord :** Kubernetes crée *d'abord* le nouveau Pod. Ceci est guidé par le paramètre `maxSurge` (par défaut 25% ou 1). Il s'autorise à avoir temporairement plus de Pods que le nombre désiré pour éviter l'interruption.
 2. **Attente de la Readiness Probe :** Le moment critique où l'ancien Pod est autorisé à être supprimé dépend de la sonde de disponibilité (`readinessProbe` sur le port 3232). Kubernetes *attend* que le nouveau Pod réponde positivement à cette sonde HTTP `GET /`.
 3. **Suppression ensuite :** Dès le moment où la Readiness Probe du nouveau Pod réussit, Kubernetes l'ajoute aux Endpoints du Service pour qu'il commence à recevoir du trafic, et *immédiatement après*, il envoie le signal de terminaison (SIGTERM) à l'ancien Pod pour le supprimer (respectant le paramètre `maxUnavailable`, par défaut 25% ou 0). C'est pourquoi on voit le statut "1 old replicas are pending termination..." pendant le rollout. Cette garantie assure le **zéro temps d'arrêt (zero downtime)**.
+
+## Observation d'un Rollout Cassé (Broken Rollout)
+
+Après avoir volontairement introduit une erreur dans le Deployment (nom d'image invalide `quote-app:v2_false`) pour simuler un échec de rollout, voici les observations :
+
+### 1. What failed first? (Qu'est-ce qui a échoué en premier ?)
+Le téléchargement de l'image (Image Pull). 
+Dans les événements du Pod (révélés par `kubectl describe pod` ou `kubectl get events`), la toute première erreur enregistrée est `Failed to pull image "quote-app:v2_false"`, suivie par l'erreur `ErrImagePull`, puis `ImagePullBackOff`. Kubernetes n'a même pas pu démarrer le processus du conteneur car le fichier image était introuvable dans le registre.
+
+### 2. Which signal showed you the failure fastest? (Quel signal vous a montré l'échec le plus rapidement ?)
+La commande `kubectl get pods`. 
+Presque instantanément (après 8 secondes dans vos logs), le statut du nouveau Pod s'est affiché comme **`ErrImagePull`** (et peu après `ImagePullBackOff`), avec `READY 0/1`. Cela indique visuellement au premier coup d'œil qu'il y a un problème critique l'empêchant de démarrer.
+
+### 3. What would you check next if this happened in production? (Que vérifieriez-vous ensuite si cela se produisait en production ?)
+Dans une situation similaire en production, voici les étapes de dépannage à suivre dans l'ordre :
+1. **La typographie et le tag :** Vérifier l'orthographe exacte du nom de l'image et du tag dans le manifeste YAML par rapport à ce qui existe réellement dans le registre Docker (ex: Harbor, AWS ECR, Docker Hub).
+2. **Les droits d'accès au registre (ImagePullSecrets) :** Si l'image existe bien, l'erreur suggère souvent un problème d'autorisation (`pull access denied`). Je vérifierais si le secret contenant les identifiants du registre Docker (`imagePullSecrets` dans le Pod/ServiceAccount) est valide, non expiré, et présent dans le bon namespace.
+3. **Le pipeline CI/CD :** Vérifier les logs du dernier job de la CI/CD pour s'assurer que l'image pour ce tag spécifique a *réellement* été construite et poussée avec succès vers le registre avant le déclenchement du déploiement Kubernetes.
+4. **La santé du nœud et du réseau :** Plus rarement, s'assurer que le nœud Kubernetes (sur lequel le Pod est planifié) n'a pas perdu son accès internet sortant ou son routage DNS l'empêchant de contacter le registre d'images.
