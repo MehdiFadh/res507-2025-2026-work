@@ -595,3 +595,26 @@ Kubernetes conserve l'historique des révisions, permettant un **rollback** rapi
 | **ReadinessProbe** | Le trafic n'est redirigé vers le nouveau Pod que lorsque sa sonde de disponibilité est au vert. |
 | **Historique des révisions** | Chaque rollout crée une nouvelle *revision*, permettant un `kubectl rollout undo` instantané en cas de régression. |
 | **Rollback possible** | Si le nouveau titre causait un problème, `kubectl rollout undo deployment/quote-app` restaurerait immédiatement la version précédente. |
+
+### Réponses aux questions d'observation du Rollout
+
+Après avoir mis à jour l'image du Deployment (`quote-app:v2`) et observé le rollout :
+
+#### 1. What changed in the cluster during the rollout? (Qu'est-ce qui a changé dans le cluster pendant le rollout ?)
+* **Un nouveau Pod a été créé :** Kubernetes a démarré un nouveau Pod (`quote-app-96697d4d5-l6rnj` dans l'exemple) exécutant la nouvelle image `quote-app:v2`.
+* **Un ancien Pod a été supprimé :** L'ancien Pod qui exécutait la version précédente de l'image a été terminé, mais *seulement après* que le nouveau Pod soit devenu prêt (`Ready 1/1`).
+* **Un nouveau ReplicaSet a été créé :** Kubernetes orchestre cela en créant un nouveau ReplicaSet pour la nouvelle version du Deployment, en l'augmentant (scale up) à 1, puis en diminuant (scale down) l'ancien ReplicaSet à 0.
+* **Nouvelle révision de l'historique :** La commande `kubectl rollout history` montre l'ajout d'une nouvelle révision (la révision 14 dans ce cas) correspondant à ce nouveau déploiement.
+
+#### 2. What stayed the same? (Qu'est-ce qui est resté identique ?)
+* **Le Deployment :** L'objet Deployment `quote-app` lui-même reste la même ressource, c'est sa spécification (le modèle de Pod / `template`) qui a été mise à jour.
+* **Le Service et l'accès réseau :** L'adresse IP du Service (`ClusterIP`) n'a pas changé. Les clients (ou l'Ingress) continuent d'envoyer leurs requêtes à la même adresse IP et au même port de Service. C'est Kubernetes (via iptables/IPVS) qui met à jour en arrière-plan ses règles de routage (Endpoints) pour pointer dynamiquement vers l'IP du **nouveau** Pod au lieu de l'ancien, sans interruption de connexion.
+* **La Base de données :** Le Pod PostgreSQL (`db-55d5976455-llkv7`) n'a absolument pas été impacté. Il a continué de tourner de manière ininterrompue (créé il y a 34m).
+* **Le Nœud :** Les conteneurs tournent toujours sur le même serveur physique/virtuel sous-jacent (le nœud `devops-ubuntu`).
+
+#### 3. How did Kubernetes decide when to create and delete Pods? (Comment Kubernetes a-t-il décidé quand créer et supprimer des Pods ?)
+L'ordre des événements est régi par la stratégie **RollingUpdate** par défaut du Deployment et par les **Sondes (Probes)** configurées :
+
+1. **Création d'abord :** Kubernetes crée *d'abord* le nouveau Pod. Ceci est guidé par le paramètre `maxSurge` (par défaut 25% ou 1). Il s'autorise à avoir temporairement plus de Pods que le nombre désiré pour éviter l'interruption.
+2. **Attente de la Readiness Probe :** Le moment critique où l'ancien Pod est autorisé à être supprimé dépend de la sonde de disponibilité (`readinessProbe` sur le port 3232). Kubernetes *attend* que le nouveau Pod réponde positivement à cette sonde HTTP `GET /`.
+3. **Suppression ensuite :** Dès le moment où la Readiness Probe du nouveau Pod réussit, Kubernetes l'ajoute aux Endpoints du Service pour qu'il commence à recevoir du trafic, et *immédiatement après*, il envoie le signal de terminaison (SIGTERM) à l'ancien Pod pour le supprimer (respectant le paramètre `maxUnavailable`, par défaut 25% ou 0). C'est pourquoi on voit le statut "1 old replicas are pending termination..." pendant le rollout. Cette garantie assure le **zéro temps d'arrêt (zero downtime)**.
