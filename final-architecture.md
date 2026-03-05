@@ -117,32 +117,32 @@ graph LR
         %% Couche Réseau / Load Balancing
         subgraph Network["Couche Réseau (Services)"]
             direction TB
-            SvcApp[[Service:\nquote-api\n(Load Balancer interne)]]:::svc
-            SvcDB[[Service:\npostgres\n(Trafic BDD)]]:::svc
+            SvcApp[["Service:\nquote-api\n(Load Balancer interne)"]]:::svc
+            SvcDB[["Service:\npostgres\n(Trafic BDD)"]]:::svc
         end
         
         %% Couche Applicative (Nodes & Pods)
         subgraph Compute["Couche Applicative (Nœuds Worker)"]
             subgraph DeployAPI["Deployment: API Quote (Replicas: 3)"]
-                App1(Pod API\nReplica 1):::podAPI
-                App2(Pod API\nReplica 2):::podAPI
-                App3(Pod API\nReplica 3):::podAPI
+                App1("Pod API\nReplica 1"):::podAPI
+                App2("Pod API\nReplica 2"):::podAPI
+                App3("Pod API\nReplica 3"):::podAPI
             end
             
             subgraph DeployDB["StatefulSet: PostgreSQL"]
-                DB(Pod DB\nUnique avec persistance):::podDB
+                DB("Pod DB\nUnique avec persistance"):::podDB
             end
         end
 
         %% Stockage et Configuration
         subgraph ConfigStorage["Configuration & Stockage"]
             direction TB
-            Secret[(Secret k8s:\nIdentifiants)]:::secret
-            PVC[(PersistentVolumeClaim)]:::storage
+            Secret[("Secret k8s:\nIdentifiants")]:::secret
+            PVC[("PersistentVolumeClaim")]:::storage
         end
     end
     
-    PV[(PersistentVolume\nStockage Externe NFS/Cloud)]:::storage
+    PV[("PersistentVolume\nStockage Externe NFS/Cloud")]:::storage
 
     %% Flux réseau
     U -->|"1. Trafic HTTP"| I
