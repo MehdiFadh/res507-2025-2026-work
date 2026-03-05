@@ -207,6 +207,22 @@ Pour véritablement rendre ce système résilient à de très fortes contraintes
 * **Une topologie Primary-Replica (Leader/Follower) :** Un nœud Master gère les écritures, et plusieurs nœuds Replicas gèrent les lectures (ce qui répartit la charge).
 * **Failover automatique :** En cas de perte du nœud Master, l'un des nœuds Replica prend instantanément sa place sans intervention humaine et de façon presque transparente pour l'API. (Des solutions comme *CrunchyData PGO*, *Zalando Postgres Operator*, ou un service managé cloud comme *AWS RDS Multi-AZ* permettent de gérer cette complexité).
 
+---
+
+# Bilan : L'Ancienne vs la Nouvelle Architecture
+
+Pour résumer le chemin parcouru, voici comment la nouvelle architecture résout spécifiquement chacune des mauvaises conceptions du système initial :
+
+| Mauvaise conception (Ancienne Architecture) | Solution apportée (Nouvelle Architecture) | Impact métier de la solution |
+| :--- | :--- | :--- |
+| **Monolithe API + DB :** Un seul Pod gère à la fois l'application Node.js sans état et la base de données PostgreSQL avec état. | **Séparation des préoccupations :** Déploiement distinct. L'API est gérée par un `Deployment` (scalable) et la base de données par un `StatefulSet` dédié. | Permet de mettre à jour et de scaler l'application de façon complètement indépendante de la base de données. |
+| **Aucune persistance des données :** La base de données tourne sur le système de fichiers éphémère du conteneur. Tout crash efface la donnée. | **Volumes persistants :** Création d'un `PersistentVolumeClaim` (PVC) rattaché à la base de données stockant la donnée physiquement hors du nœud de calcul. | Garantie absolue contre la perte de données (*Data Loss*) en cas de crash applicatif ou d'éviction d'un Pod. |
+| **Point de Défaillance Unique (SPOF) :** L'application n'a qu'un unique réplica (`replicas: 1`). Si le Pod plante, le site est hors ligne. | **Haute Disponibilité (High Availability API) :** Configuration de `replicas: 3` couplé à un Auto-Scaling (HPA) derrière un Service LoadBalancer. | Le trafic des utilisateurs est ininterrompu même si 1 ou 2 Pods crashent simultanément. |
+| **Secrets exposés en texte clair :** Le mot de passe de la DB est écrit en dur `DB_PASSWORD=en_clair` dans les manifestes YAML du dépôt Git. | **Gestion sécurisée des Secrets :** Utilisation d'une ressource Kubernetes `Secret` chiffrée en base64 (ou couplée à un Vault externe), injectée de manière sécurisée en RAM. | Aucune possibilité de fuite d'identifiants dans le code source ; politique RBAC stricte applicable sur l'objet Secret. |
+| **Interruption de service garantie lors des mises à jour :** Le remplacement d'image s'effectue brusquement, supprimant l'ancien Pod avant de démarrer le nouveau. | **Stratégie Zero-Downtime :** Mise en place d'une stratégie `RollingUpdate` rigoureuse (maxSurge: 1, maxUnavailable: 0) avec bascule fine. | L'utilisateur final ne voit jamais de "Page introuvable" lors du déploiement d'une nouvelle version de code par les développeurs. |
+| **Aucune conscience de la santé applicative :** Kubernetes suppose que l'API fonctionne tant que le conteneur est "Running", même si l'API est morte intérieurement (boucle infinie). | **Sondes Liveness & Readiness :** Ajout de sondes HTTP régulières contrôlant l'état /health de l'API. | Auto-guérison (*Self-Healing*) : les Pods bloqués sont automatiquement "tués" et le trafic est dérouté des Pods surchargés en prévention. |
+| **Pas de limites (Noisy Neighbor) :** Le Pod n'a pas de limites de RAM. Une fuite mémoire peut crasher tout le Nœud physique du serveur. | **Requests & Limits :** Encadrement strict de la mémoire et du CPU alloués aux Pods de l'application et de la DB. | Garantie qu'une application folle n'impactera que sa propre sandbox (`OOMKilled`) sans perturber les instances voisines. |
+
 
 ---
 
