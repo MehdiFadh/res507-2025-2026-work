@@ -637,3 +637,18 @@ Dans une situation similaire en production, voici les étapes de dépannage à s
 2. **Les droits d'accès au registre (ImagePullSecrets) :** Si l'image existe bien, l'erreur suggère souvent un problème d'autorisation (`pull access denied`). Je vérifierais si le secret contenant les identifiants du registre Docker (`imagePullSecrets` dans le Pod/ServiceAccount) est valide, non expiré, et présent dans le bon namespace.
 3. **Le pipeline CI/CD :** Vérifier les logs du dernier job de la CI/CD pour s'assurer que l'image pour ce tag spécifique a *réellement* été construite et poussée avec succès vers le registre avant le déclenchement du déploiement Kubernetes.
 4. **La santé du nœud et du réseau :** Plus rarement, s'assurer que le nœud Kubernetes (sur lequel le Pod est planifié) n'a pas perdu son accès internet sortant ou son routage DNS l'empêchant de contacter le registre d'images.
+
+## Observation d'un Rollback (Annulation de Déploiement)
+
+Après avoir exécuté la commande d'annulation `kubectl rollout undo deployment quote-app` pour revenir à l'état stable précédent :
+
+### 1. What did rollback change? (Qu'est-ce que le rollback a changé ?)
+* **La spécification du Deployment (Template) :** Le rollback a restauré la spécification du Pod du *Deployment* pour qu'elle corresponde exactement à la révision précédente (l'image est repassée de `quote-app:v2_false` à l'image valide précédente `quote-app:v2`).
+* **Les Pods actifs :** Kubernetes a supprimé le Pod défaillant coincé dans l'état `ImagePullBackOff`.
+* **L'historique des révisions :** Une nouvelle révision a été ajoutée à l'historique du Deployment, correspondant à l'état de la révision précédente qui a été restaurée.
+* **L'état des ReplicaSets :** L'ancien ReplicaSet fonctionnel a été remis à l'échelle (scaled up) à 1, et le ReplicaSet défaillant (qui tentait de déployer la mauvaise image) a été remis à 0.
+
+### 2. What did rollback not change? (Qu'est-ce que le rollback n'a pas changé ?)
+* **Les Pods fonctionnels déjà en cours d'exécution :** L'ancien Pod qui était toujours en état `Running` (car le *RollingUpdate* n'avait pas réussi à déployer le nouveau) **n'a jamais été interrompu**. Le rollback s'est contenté d'abandonner l'essai de mise à jour. L'application est restée 100% disponible pour les utilisateurs du début à la fin de l'incident.
+* **Le Service et la Base de Données :** Le `Service` Kubernetes et le point de terminaison du Service n'ont subi aucun changement, et la base de données PostgreSQL a continué à fonctionner normalement.
+* **L'état désiré global :** Le nombre de réplicas désiré est resté le même (`replicas: 1`), seul le modèle d'image a fait un retour en arrière.
