@@ -96,60 +96,75 @@ Pour corriger les problèmes identifiés, voici une conception prête pour la pr
 Voici le diagramme représentant cette architecture :
 
 ```mermaid
-graph TD
-    classDef k8s fill:#326ce5,stroke:#fff,stroke-width:2px,color:#fff;
-    classDef storage fill:#ff9900,stroke:#fff,stroke-width:2px,color:#fff;
-    classDef user fill:#4caf50,stroke:#fff,stroke-width:2px,color:#fff;
-    classDef database fill:#3f51b5,stroke:#fff,stroke-width:2px,color:#fff;
+graph LR
+    %% Styles
+    classDef user fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#fff;
+    classDef ingress fill:#ab47bc,stroke:#7b1fa2,stroke-width:2px,color:#fff;
+    classDef svc fill:#29b6f6,stroke:#0277bd,stroke-width:2px,color:#fff;
+    classDef podAPI fill:#ffb300,stroke:#f57c00,stroke-width:2px,color:#fff;
+    classDef podDB fill:#5c6bc0,stroke:#283593,stroke-width:2px,color:#fff;
+    classDef storage fill:#8d6e63,stroke:#4e342e,stroke-width:2px,color:#fff;
+    classDef secret fill:#f06292,stroke:#c2185b,stroke-width:2px,color:#fff;
 
     U((Utilisateurs)):::user
 
-    subgraph Cluster["Cluster Kubernetes"]
-        I[Ingress / NodePort]:::k8s
+    subgraph Cluster["Cluster Kubernetes (Production)"]
+        direction LR
         
-        subgraph Nodes["Couche d'Infrastructure (Noeuds Worker)"]
-            subgraph Node1["Node 1"]
-                App1(Pod: Quote API\nReplica 1):::k8s
+        %% Point d'entrée
+        I[Ingress / NodePort]:::ingress
+        
+        %% Couche Réseau / Load Balancing
+        subgraph Network["Couche Réseau (Services)"]
+            direction TB
+            SvcApp[[Service:\nquote-api\n(Load Balancer interne)]]:::svc
+            SvcDB[[Service:\npostgres\n(Trafic BDD)]]:::svc
+        end
+        
+        %% Couche Applicative (Nodes & Pods)
+        subgraph Compute["Couche Applicative (Nœuds Worker)"]
+            subgraph DeployAPI["Deployment: API Quote (Replicas: 3)"]
+                App1(Pod API\nReplica 1):::podAPI
+                App2(Pod API\nReplica 2):::podAPI
+                App3(Pod API\nReplica 3):::podAPI
             end
             
-            subgraph Node2["Node 2"]
-                App2(Pod: Quote API\nReplica 2):::k8s
-                DB(Pod: PostgreSQL):::database
-            end
-            
-            subgraph Node3["Node 3"]
-                App3(Pod: Quote API\nReplica 3):::k8s
+            subgraph DeployDB["StatefulSet: PostgreSQL"]
+                DB(Pod DB\nUnique avec persistance):::podDB
             end
         end
 
-        SvcApp[[Service:\nquote-api]]:::k8s
-        SvcDB[[Service:\npostgres]]:::k8s
-        
-        Secret[(Secret:\nDB Credentials)]:::storage
-        PVC[(PersistentVolumeClaim)]:::storage
+        %% Stockage et Configuration
+        subgraph ConfigStorage["Configuration & Stockage"]
+            direction TB
+            Secret[(Secret k8s:\nIdentifiants)]:::secret
+            PVC[(PersistentVolumeClaim)]:::storage
+        end
     end
     
-    PV[(PersistentVolume\nStockage Externe)]:::storage
+    PV[(PersistentVolume\nStockage Externe NFS/Cloud)]:::storage
 
-    U -->|"Requêtes HTTP"| I
-    I -->|"Routage interne"| SvcApp
+    %% Flux réseau
+    U -->|"1. Trafic HTTP"| I
+    I -->|"2. Routage"| SvcApp
     
-    SvcApp -->|"Load Balancing"| App1
-    SvcApp -->|"Load Balancing"| App2
-    SvcApp -->|"Load Balancing"| App3
-    
-    Secret -.->|"Injections (Env Vars)"| App1
-    Secret -.->|"Injections (Env Vars)"| App2
-    Secret -.->|"Injections (Env Vars)"| App3
-    Secret -.->|"Mots de passe"| DB
+    SvcApp -->|"3. Répartition"| App1
+    SvcApp -->|"3. Répartition"| App2
+    SvcApp -->|"3. Répartition"| App3
 
-    App1 -->|"Connexion (TCP 5432)"| SvcDB
-    App2 -->|"Connexion (TCP 5432)"| SvcDB
-    App3 -->|"Connexion (TCP 5432)"| SvcDB
+    App1 -->|"4. Connexion TCP"| SvcDB
+    App2 -->|"4. Connexion TCP"| SvcDB
+    App3 -->|"4. Connexion TCP"| SvcDB
     
-    SvcDB -->|"Trafic DB"| DB
+    SvcDB -->|"5. Routage DB"| DB
     
-    DB -->|"Monte le stockage"| PVC
+    %% Injection et Stockage
+    Secret -.->|"Injection Env Vars"| App1
+    Secret -.->|"Injection Env Vars"| App2
+    Secret -.->|"Injection Env Vars"| App3
+    Secret -.->|"Injection Env Vars"| DB
+
+    DB -->|"Montage système de fichiers"| PVC
     PVC --- PV
 ```
 
