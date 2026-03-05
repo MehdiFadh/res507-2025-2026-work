@@ -507,3 +507,91 @@ Voici où et comment le Secret est stocké et protégé :
 | **En transit** | Les communications API Server ↔ etcd utilisent TLS. | S'assurer que le TLS est bien actif (c'est le cas par défaut avec k3s). |
 
 > **En résumé :** Les Secrets Kubernetes offrent une meilleure *gestion* des données sensibles (séparation, RBAC, rotation), mais pas de vrai *chiffrement* sans configuration supplémentaire. Pour une sécurité de niveau production, il faut activer le chiffrement au repos d'etcd et/ou utiliser un gestionnaire de secrets externe.
+
+---
+
+## Rollout Contrôlé (Controlled Rollout)
+
+Pour démontrer le mécanisme de *Rolling Update* de Kubernetes, nous avons effectué un petit changement applicatif sûr et observé le processus de déploiement de bout en bout.
+
+### 1. Le changement : Titre de la page
+
+Modification du titre visible de l'application dans `app/views/index.hbs` :
+
+```diff
+- <title>QuoteBoard</title>
++ <title>QuoteBoard v2</title>
+```
+
+```diff
+- <h1>QuoteBoard</h1>
++ <h1>QuoteBoard v2</h1>
+```
+
+### 2. Reconstruction de l'image Docker
+
+```bash
+$ docker build -t quote-app:local -f docker/Dockerfile .
+Step 5/8 : COPY app/ ./
+ ---> d52b3bffce49        # ← Nouvelle couche (fichier modifié détecté)
+...
+Successfully tagged quote-app:local
+```
+
+La nouvelle image contient le titre mis à jour. Les couches précédentes (`npm ci`, etc.) sont réutilisées grâce au **cache Docker** — seul le `COPY app/` est recalculé.
+
+### 3. Déclenchement du Rollout
+
+```bash
+$ kubectl rollout restart deployment/quote-app
+deployment.apps/quote-app restarted
+
+$ kubectl rollout status deployment/quote-app
+deployment "quote-app" successfully rolled out
+```
+
+### 4. Vérification
+
+#### `kubectl get pods`
+
+```
+NAME                         READY   STATUS    RESTARTS   AGE
+quote-app-7954798c78-tdq6m   1/1     Running   0          60s
+```
+
+Un tout nouveau Pod (`-tdq6m`) a remplacé l'ancien. L'application fonctionne avec le nouveau titre.
+
+#### `kubectl rollout history deployment/quote-app`
+
+```
+REVISION  CHANGE-CAUSE
+1         <none>
+2         <none>
+...
+12        <none>
+13        <none>          ← Notre rollout (dernier)
+```
+
+Kubernetes conserve l'historique des révisions, permettant un **rollback** rapide si nécessaire (`kubectl rollout undo deployment/quote-app`).
+
+#### `kubectl get events` (extrait)
+
+```
+68s   Normal  ScalingReplicaSet  deployment/quote-app  Scaled up replica set quote-app-7954798c78 from 0 to 1
+60s   Normal  ScalingReplicaSet  deployment/quote-app  Scaled down replica set quote-app-787cf876d8 from 1 to 0
+```
+
+**Ce que montrent les Events :**
+1. Kubernetes crée un **nouveau ReplicaSet** (`-7954798c78`) et lance 1 nouveau Pod avec la nouvelle image.
+2. Le nouveau Pod démarre, passe les **readinessProbe** et devient `Ready`.
+3. Kubernetes **éteint** l'ancien ReplicaSet (`-787cf876d8`) en le ramenant à 0 réplicas.
+4. L'ancien Pod est supprimé proprement (*graceful shutdown*).
+
+### 5. Ce que démontre cet exercice
+
+| Étape | Mécanisme Kubernetes |
+| :--- | :--- |
+| **Nouveau Pod d'abord** | Le Rolling Update crée le nouveau Pod *avant* de supprimer l'ancien → **zéro interruption de service**. |
+| **ReadinessProbe** | Le trafic n'est redirigé vers le nouveau Pod que lorsque sa sonde de disponibilité est au vert. |
+| **Historique des révisions** | Chaque rollout crée une nouvelle *revision*, permettant un `kubectl rollout undo` instantané en cas de régression. |
+| **Rollback possible** | Si le nouveau titre causait un problème, `kubectl rollout undo deployment/quote-app` restaurerait immédiatement la version précédente. |
